@@ -34,7 +34,7 @@ pub enum Body {
     #[serde(rename = "generate_ok")]
     GenerateOk { id: String, in_reply_to: usize },
     #[serde(rename = "broadcast")]
-    Broadcast { msg_id: usize, message: usize },
+    Broadcast { msg_id: Option<usize>, message: usize },
     #[serde(rename = "broadcast_ok")]
     BroadcastOk { in_reply_to: usize },
     #[serde(rename = "read")]
@@ -56,7 +56,13 @@ pub enum Body {
 pub struct Node {
     pub id: String,
     pub node_ids: Vec<String>,
-    pub seen: HashSet<usize>,
+    pub messages: HashSet<usize>,
+}
+
+impl Default for Node {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Node {
@@ -64,13 +70,13 @@ impl Node {
         Node {
             id: String::new(),
             node_ids: vec![],
-            seen: HashSet::new(),
+            messages: HashSet::new(),
         }
     }
 
-    pub fn handle(&mut self, msg: Message) -> Option<Message> {
+    pub fn handle(&mut self, msg: Message) -> Vec<Message> {
         match msg.body {
-            Body::Echo { msg_id, echo } => Some(Message {
+            Body::Echo { msg_id, echo } => vec![Message {
                 src: self.id.to_string(),
                 dest: msg.src,
                 body: Body::EchoOk {
@@ -78,7 +84,7 @@ impl Node {
                     echo,
                     in_reply_to: msg_id,
                 },
-            }),
+            }],
             Body::Init {
                 msg_id,
                 node_id,
@@ -86,54 +92,74 @@ impl Node {
             } => {
                 self.id = node_id;
                 self.node_ids = node_ids;
-                Some(Message {
+                vec![Message {
                     src: self.id.to_string(),
                     dest: msg.src,
                     body: Body::InitOk {
                         in_reply_to: msg_id,
                     },
-                })
+                }]
             }
             Body::Generate { msg_id } => {
                 let id = format!("{}-{}", self.id, msg_id);
-                Some(Message {
+                vec![Message {
                     src: self.id.to_string(),
                     dest: msg.src,
                     body: Body::GenerateOk {
                         id,
                         in_reply_to: msg_id,
                     },
-                })
+                }]
             }
             Body::Broadcast { msg_id, message } => {
-                self.seen.insert(message);
-                Some(Message {
-                    src: self.id.to_string(),
-                    dest: msg.src,
-                    body: Body::BroadcastOk {
-                        in_reply_to: msg_id,
-                    },
-                })
+                let mut responses = vec![];
+
+                if !self.messages.contains(&message) {
+                    self.messages.insert(message);
+
+                    for neighbor in &self.node_ids {
+                        responses.push(Message {
+                            src: self.id.to_string(),
+                            dest: neighbor.to_string(),
+                            body: Body::Broadcast {
+                                msg_id: None,
+                                message,
+                            },
+                        });
+                    }
+
+                    if let Some(id) = msg_id {
+                        responses.push(Message {
+                            src: self.id.to_string(),
+                            dest: msg.src,
+                            body: Body::BroadcastOk {
+                                in_reply_to: id,
+                            },
+                        });
+                    }
+                }
+
+                responses
             }
-            Body::Read { msg_id } => Some(Message {
+            Body::Read { msg_id } => vec![Message {
                 src: self.id.to_string(),
                 dest: msg.src,
                 body: Body::ReadOk {
                     in_reply_to: msg_id,
-                    messages: self.seen.clone(),
+                    messages: self.messages.clone(),
                 },
-            }),
+            }],
             Body::Topology { msg_id, topology } => {
-                self.node_ids = topology.get(&self.id).unwrap().clone();
-                Some(Message {
+                self.node_ids.clone_from(topology.get(&self.id).unwrap());
+                vec![Message {
                     src: self.id.to_string(),
                     dest: msg.src,
                     body: Body::TopologyOk {
                         in_reply_to: msg_id,
                     },
-                })
+                }]
             }
-            _ => None,
+            _ => vec![],
         }
     }
 }

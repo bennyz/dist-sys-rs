@@ -36,7 +36,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         log_to_file(&input, false)?;
 
         let input = serde_json::from_str::<Message>(&input)?;
-        if let Some(response) = node.handle(input) {
+        let responses = node.handle(input);
+        for response in responses {
             let response = serde_json::to_string(&response)?;
             log_to_file(&response, true)?;
             writeln!(stdout, "{}", response)?;
